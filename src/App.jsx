@@ -3,81 +3,111 @@ import { motion, AnimatePresence } from 'framer-motion';
 
 /**
  * ====================================================================
- * RETROALIMENTACIÓN HÁPTICA MULTIPLATAFORMA (Android + iOS)
+ * RETROALIMENTACIÓN HÁPTICA MULTIPLATAFORMA (Android + iOS + Visual)
  * 
- * Android: Usa navigator.vibrate() (API estándar).
- * iOS:     Safari no soporta la Vibration API, pero desde iOS 17.4
- *          al hacer toggle de un <input type="checkbox" switch> oculto
- *          se activa el Taptic Engine nativo del iPhone.
- *          Usamos esa técnica como workaround confiable.
+ * Android Chrome:  navigator.vibrate() — funciona solo en teléfonos reales,
+ *                  NO en escritorio (no hay motor de vibración).
+ * iOS Safari:      Workaround con <input type="checkbox" switch> oculto.
+ *                  El Taptic Engine se activa al toggle. (iOS 17.4+)
+ * Fallback Visual: Flash blanco ultrarrápido en toda la pantalla,
+ *                  garantiza feedback táctil percibido universalmente.
  * ====================================================================
  */
 
-// Detectar si estamos en iOS (iPhone/iPad con Safari o WebKit)
-const isIOS = () => {
-  if (typeof navigator === 'undefined') return false;
-  return /iPhone|iPad|iPod/.test(navigator.userAgent) ||
-    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-};
+// Detección de plataforma iOS
+const _isIOS = typeof navigator !== 'undefined' && (
+  /iPhone|iPad|iPod/.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+);
 
-// Elemento oculto para activar el Taptic Engine en iOS
-let iosHapticCheckbox = null;
-
-/**
- * Inicializa el checkbox oculto de tipo "switch" que activa
- * la vibración nativa del iPhone al hacer click programático.
- * Se llama una sola vez en el primer toque del usuario.
- */
-const ensureIOSHapticElement = () => {
-  if (iosHapticCheckbox) return iosHapticCheckbox;
-
-  const input = document.createElement('input');
-  input.type = 'checkbox';
-  input.setAttribute('switch', '');           // Estilo switch nativo de iOS
-  input.style.position = 'fixed';
-  input.style.left = '-9999px';
-  input.style.top = '-9999px';
-  input.style.opacity = '0';
-  input.style.pointerEvents = 'none';
-  input.style.width = '0';
-  input.style.height = '0';
-  input.tabIndex = -1;
-  input.setAttribute('aria-hidden', 'true');
-  document.body.appendChild(input);
-
-  iosHapticCheckbox = input;
-  return input;
-};
+// Detección de soporte de Vibration API (solo Android en la práctica)
+const _canVibrate = typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function';
 
 /**
- * triggerHaptic()
- * Dispara retroalimentación háptica en el dispositivo del usuario.
- * @param {number|number[]} pattern - Duración en ms (Android) o array de patrones.
+ * Crea e inyecta el checkbox switch oculto para iOS Taptic Engine.
+ * Se mantiene siempre en el DOM con tamaño mínimo (1x1px) y clip-path
+ * para que iOS lo considere "visible" internamente.
  */
-const triggerHaptic = (pattern = 40) => {
-  // Android y navegadores con Vibration API
-  if (typeof navigator !== 'undefined' && navigator.vibrate) {
+let _iosSwitch = null;
+const _getIOSSwitch = () => {
+  if (_iosSwitch) return _iosSwitch;
+  const el = document.createElement('input');
+  el.type = 'checkbox';
+  el.setAttribute('switch', '');
+  // iOS necesita que el elemento exista en el viewport con tamaño mínimo
+  Object.assign(el.style, {
+    position: 'fixed',
+    bottom: '0',
+    left: '0',
+    width: '1px',
+    height: '1px',
+    opacity: '0.01',         // Casi invisible pero técnicamente "visible"
+    pointerEvents: 'none',
+    zIndex: '-1',
+    clipPath: 'inset(50%)',  // Recortado visualmente
+  });
+  el.tabIndex = -1;
+  el.setAttribute('aria-hidden', 'true');
+  document.body.appendChild(el);
+  _iosSwitch = el;
+  return el;
+};
+
+/**
+ * Flash visual ultrarrápido como feedback universal
+ * Se crea un overlay blanco que aparece y desaparece en ~100ms
+ */
+const _flashVisual = () => {
+  const flash = document.createElement('div');
+  Object.assign(flash.style, {
+    position: 'fixed',
+    inset: '0',
+    background: 'rgba(255, 255, 255, 0.35)',
+    pointerEvents: 'none',
+    zIndex: '9999',
+    transition: 'opacity 80ms ease-out',
+    opacity: '1',
+  });
+  document.body.appendChild(flash);
+  // Desvanecer rápido
+  requestAnimationFrame(() => {
+    flash.style.opacity = '0';
+    setTimeout(() => flash.remove(), 100);
+  });
+};
+
+/**
+ * triggerHaptic() — Punto de entrada principal
+ * Intenta vibrar el dispositivo; si no es posible, da flash visual.
+ * @param {number|number[]} pattern - ms de vibración (Android)
+ */
+const triggerHaptic = (pattern = 50) => {
+  let didHaptic = false;
+
+  // 1. Android: Vibration API
+  if (_canVibrate) {
     try {
-      navigator.vibrate(pattern);
-      return;
+      didHaptic = navigator.vibrate(pattern);
     } catch {
-      // Fallback silencioso
+      // Fallo silencioso
     }
   }
 
-  // iOS: Activar Taptic Engine mediante el toggle del checkbox switch
-  if (isIOS()) {
+  // 2. iOS: Toggle del switch para activar Taptic Engine
+  if (!didHaptic && _isIOS) {
     try {
-      const checkbox = ensureIOSHapticElement();
-      checkbox.click();   // Toggle ON  → Taptic tap
-      // Toggle de vuelta para que quede listo para el siguiente uso
-      requestAnimationFrame(() => {
-        checkbox.click(); // Toggle OFF → segundo tap sutil
-      });
+      const sw = _getIOSSwitch();
+      sw.click();
+      // Reset para el siguiente uso (en un frame aparte para no cancelar el tap)
+      setTimeout(() => { sw.checked = !sw.checked; }, 50);
+      didHaptic = true;
     } catch {
-      // Silencioso si falla
+      // Fallo silencioso
     }
   }
+
+  // 3. Fallback visual universal (siempre se ejecuta como refuerzo)
+  _flashVisual();
 };
 
 
