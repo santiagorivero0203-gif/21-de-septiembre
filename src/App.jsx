@@ -3,20 +3,83 @@ import { motion, AnimatePresence } from 'framer-motion';
 
 /**
  * ====================================================================
- * UTILIDAD DE RETROALIMENTACIÓN HÁPTICA (Móviles)
- * Proporciona respuesta táctil en dispositivos compatibles al tocar
- * la caja o interactuar con las sorpresas.
+ * RETROALIMENTACIÓN HÁPTICA MULTIPLATAFORMA (Android + iOS)
+ * 
+ * Android: Usa navigator.vibrate() (API estándar).
+ * iOS:     Safari no soporta la Vibration API, pero desde iOS 17.4
+ *          al hacer toggle de un <input type="checkbox" switch> oculto
+ *          se activa el Taptic Engine nativo del iPhone.
+ *          Usamos esa técnica como workaround confiable.
  * ====================================================================
  */
+
+// Detectar si estamos en iOS (iPhone/iPad con Safari o WebKit)
+const isIOS = () => {
+  if (typeof navigator === 'undefined') return false;
+  return /iPhone|iPad|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+};
+
+// Elemento oculto para activar el Taptic Engine en iOS
+let iosHapticCheckbox = null;
+
+/**
+ * Inicializa el checkbox oculto de tipo "switch" que activa
+ * la vibración nativa del iPhone al hacer click programático.
+ * Se llama una sola vez en el primer toque del usuario.
+ */
+const ensureIOSHapticElement = () => {
+  if (iosHapticCheckbox) return iosHapticCheckbox;
+
+  const input = document.createElement('input');
+  input.type = 'checkbox';
+  input.setAttribute('switch', '');           // Estilo switch nativo de iOS
+  input.style.position = 'fixed';
+  input.style.left = '-9999px';
+  input.style.top = '-9999px';
+  input.style.opacity = '0';
+  input.style.pointerEvents = 'none';
+  input.style.width = '0';
+  input.style.height = '0';
+  input.tabIndex = -1;
+  input.setAttribute('aria-hidden', 'true');
+  document.body.appendChild(input);
+
+  iosHapticCheckbox = input;
+  return input;
+};
+
+/**
+ * triggerHaptic()
+ * Dispara retroalimentación háptica en el dispositivo del usuario.
+ * @param {number|number[]} pattern - Duración en ms (Android) o array de patrones.
+ */
 const triggerHaptic = (pattern = 40) => {
-  if (typeof window !== 'undefined' && window.navigator && window.navigator.vibrate) {
+  // Android y navegadores con Vibration API
+  if (typeof navigator !== 'undefined' && navigator.vibrate) {
     try {
-      window.navigator.vibrate(pattern);
+      navigator.vibrate(pattern);
+      return;
     } catch {
-      // Silencioso en navegadores sin soporte
+      // Fallback silencioso
+    }
+  }
+
+  // iOS: Activar Taptic Engine mediante el toggle del checkbox switch
+  if (isIOS()) {
+    try {
+      const checkbox = ensureIOSHapticElement();
+      checkbox.click();   // Toggle ON  → Taptic tap
+      // Toggle de vuelta para que quede listo para el siguiente uso
+      requestAnimationFrame(() => {
+        checkbox.click(); // Toggle OFF → segundo tap sutil
+      });
+    } catch {
+      // Silencioso si falla
     }
   }
 };
+
 
 /**
  * ====================================================================
