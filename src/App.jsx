@@ -551,7 +551,7 @@ export default function App() {
                         transition={{ repeat: Infinity, duration: 1.3, ease: "easeInOut" }}
                         className="mt-2 text-3xl inline-block"
                       >
-                        💛
+                        💖
                       </motion.div>
 
                       {/* Botón discreto para reiniciar la experiencia si lo desea */}
