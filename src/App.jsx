@@ -3,112 +3,90 @@ import { motion, AnimatePresence } from 'framer-motion';
 
 /**
  * ====================================================================
- * RETROALIMENTACIÓN HÁPTICA MULTIPLATAFORMA (Android + iOS + Visual)
+ * RETROALIMENTACIÓN SENSORIAL MULTIPLATAFORMA
  * 
- * Android Chrome:  navigator.vibrate() — funciona solo en teléfonos reales,
- *                  NO en escritorio (no hay motor de vibración).
- * iOS Safari:      Workaround con <input type="checkbox" switch> oculto.
- *                  El Taptic Engine se activa al toggle. (iOS 17.4+)
- * Fallback Visual: Flash blanco ultrarrápido en toda la pantalla,
- *                  garantiza feedback táctil percibido universalmente.
+ * Android:  navigator.vibrate() funciona en teléfonos reales.
+ * iPhone:   Apple bloquea toda vibración web. No hay workaround fiable.
+ * Universal: Micro-sonido "tap" + flash visual instantáneo que simula
+ *            la sensación de respuesta táctil en TODOS los dispositivos.
  * ====================================================================
  */
 
-// Detección de plataforma iOS
-const _isIOS = typeof navigator !== 'undefined' && (
-  /iPhone|iPad|iPod/.test(navigator.userAgent) ||
-  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
-);
-
-// Detección de soporte de Vibration API (solo Android en la práctica)
+// Soporte de vibración (solo Android real)
 const _canVibrate = typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function';
 
+// AudioContext compartido para el micro-sonido de tap
+let _audioCtx = null;
+
 /**
- * Crea e inyecta el checkbox switch oculto para iOS Taptic Engine.
- * Se mantiene siempre en el DOM con tamaño mínimo (1x1px) y clip-path
- * para que iOS lo considere "visible" internamente.
+ * Genera un "click" sutil de ~30ms mediante la Web Audio API.
+ * Funciona en iPhone, Android y Desktop. Es un pulso corto
+ * que imita la retroalimentación sonora de un botón físico.
  */
-let _iosSwitch = null;
-const _getIOSSwitch = () => {
-  if (_iosSwitch) return _iosSwitch;
-  const el = document.createElement('input');
-  el.type = 'checkbox';
-  el.setAttribute('switch', '');
-  // iOS necesita que el elemento exista en el viewport con tamaño mínimo
-  Object.assign(el.style, {
-    position: 'fixed',
-    bottom: '0',
-    left: '0',
-    width: '1px',
-    height: '1px',
-    opacity: '0.01',         // Casi invisible pero técnicamente "visible"
-    pointerEvents: 'none',
-    zIndex: '-1',
-    clipPath: 'inset(50%)',  // Recortado visualmente
-  });
-  el.tabIndex = -1;
-  el.setAttribute('aria-hidden', 'true');
-  document.body.appendChild(el);
-  _iosSwitch = el;
-  return el;
+const _playTapSound = () => {
+  try {
+    if (!_audioCtx) {
+      _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    // Reanudar si está suspendido (política de autoplay de iOS)
+    if (_audioCtx.state === 'suspended') {
+      _audioCtx.resume();
+    }
+    const osc = _audioCtx.createOscillator();
+    const gain = _audioCtx.createGain();
+    osc.connect(gain);
+    gain.connect(_audioCtx.destination);
+    
+    // Pulso de 1800Hz muy corto y con volumen bajo = "click" sutil
+    osc.frequency.value = 1800;
+    osc.type = 'sine';
+    gain.gain.setValueAtTime(0.08, _audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, _audioCtx.currentTime + 0.03);
+    
+    osc.start(_audioCtx.currentTime);
+    osc.stop(_audioCtx.currentTime + 0.03);
+  } catch {
+    // Silencioso si falla (navegador muy viejo)
+  }
 };
 
 /**
- * Flash visual ultrarrápido como feedback universal
- * Se crea un overlay blanco que aparece y desaparece en ~100ms
+ * Flash visual instantáneo: destello blanco-dorado que aparece y
+ * desaparece en ~120ms, reforzando la sensación de "click" táctil.
  */
 const _flashVisual = () => {
   const flash = document.createElement('div');
   Object.assign(flash.style, {
     position: 'fixed',
     inset: '0',
-    background: 'rgba(255, 255, 255, 0.35)',
+    background: 'radial-gradient(circle at center, rgba(253,224,71,0.35), rgba(255,255,255,0.2))',
     pointerEvents: 'none',
     zIndex: '9999',
-    transition: 'opacity 80ms ease-out',
     opacity: '1',
   });
   document.body.appendChild(flash);
-  // Desvanecer rápido
   requestAnimationFrame(() => {
+    flash.style.transition = 'opacity 100ms ease-out';
     flash.style.opacity = '0';
-    setTimeout(() => flash.remove(), 100);
+    setTimeout(() => flash.remove(), 120);
   });
 };
 
 /**
- * triggerHaptic() — Punto de entrada principal
- * Intenta vibrar el dispositivo; si no es posible, da flash visual.
- * @param {number|number[]} pattern - ms de vibración (Android)
+ * triggerHaptic() — Feedback sensorial al interactuar
+ * @param {number|number[]} pattern - ms de vibración (solo Android)
  */
 const triggerHaptic = (pattern = 50) => {
-  let didHaptic = false;
-
-  // 1. Android: Vibration API
+  // Android: vibración real
   if (_canVibrate) {
-    try {
-      didHaptic = navigator.vibrate(pattern);
-    } catch {
-      // Fallo silencioso
-    }
+    try { navigator.vibrate(pattern); } catch { /* silencioso */ }
   }
 
-  // 2. iOS: Toggle del switch para activar Taptic Engine
-  if (!didHaptic && _isIOS) {
-    try {
-      const sw = _getIOSSwitch();
-      sw.click();
-      // Reset para el siguiente uso (en un frame aparte para no cancelar el tap)
-      setTimeout(() => { sw.checked = !sw.checked; }, 50);
-      didHaptic = true;
-    } catch {
-      // Fallo silencioso
-    }
-  }
-
-  // 3. Fallback visual universal (siempre se ejecuta como refuerzo)
+  // Universal: sonido "click" + flash visual (funciona en iPhone y todo)
+  _playTapSound();
   _flashVisual();
 };
+
 
 
 /**
