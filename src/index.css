@@ -1,0 +1,6 @@
+@import "tailwindcss";
+
+/* Desactivamos el highlight azul al tocar en Safari/Chrome móvil */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
